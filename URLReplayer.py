@@ -120,7 +120,7 @@ class BurpExtender(IBurpExtender, IHttpListener, ITab):
         callbacks.registerHttpListener(self)
         callbacks.addSuiteTab(self)
         
-        print("URL Replayer Plugin LOADED (V7.3 - Final Version)")
+        print("URL Replayer Plugin LOADED (V1.0 - Final Version)")
 
     def processHttpMessage(self, toolFlag, messageIsRequest, messageInfo):
         
