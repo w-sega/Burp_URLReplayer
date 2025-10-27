@@ -8,4 +8,4 @@ URLReplayer是一个burp插件，用于监听匹配所有响应中的接口，�
 默认开启监听，选中要测试的url，点击send。右侧的请求列表右键可发送到repeater  
 
 下方配置白名单地址
-<img src="20251024172156.png" alt="" width="80%">
+<img src="20251027093953.png" alt="" width="80%">
