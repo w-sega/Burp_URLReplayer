@@ -122,7 +122,7 @@ class BurpExtender(IBurpExtender, IHttpListener, ITab):
         callbacks.registerHttpListener(self)
         callbacks.addSuiteTab(self)
         
-        print("URL Replayer Plugin LOADED (V9.1 - Final Version)")
+        print("URL Replayer Plugin LOADED (V1.1 - Final Version)")
 
     def processHttpMessage(self, toolFlag, messageIsRequest, messageInfo):
         
@@ -221,16 +221,13 @@ class BurpExtender(IBurpExtender, IHttpListener, ITab):
                 if is_static:
                     continue
                 
-                # --- START MODIFICATION (V9.2) ---
                 
                 method = "GET"  # 默认方法
                 start_pos = match.start()
                 end_pos = match.end()
                 
-                # 1. 优先检查URL之前的100个字符 (例如 .get(... , "get": ...)
                 context_before = body_string[max(0, start_pos - 100) : start_pos].lower()
                 
-                # 查找每种方法关键字的 *最后一次* 出现位置
                 pos_post = max(context_before.rfind(".post("), context_before.rfind("\"post\":"))
                 pos_get = max(context_before.rfind(".get("), context_before.rfind("\"get\":"))
                 pos_put = max(context_before.rfind(".put("), context_before.rfind("\"put\":"))
@@ -243,14 +240,11 @@ class BurpExtender(IBurpExtender, IHttpListener, ITab):
                     "DELETE": pos_delete
                 }
                 
-                # 过滤掉未找到的 (-1)，并找到位置索引最大的 (最接近URL的)
                 found_methods = {m: p for m, p in positions.items() if p != -1}
                 
                 if found_methods:
-                    # 将方法设置为最接近URL的那个
                     method = max(found_methods, key=found_methods.get)
                 else:
-                    # 2. 如果之前没找到，再检查URL之后的50个字符 (例如 method: "post")
                     context_after = body_string[end_pos : min(len(body_string), end_pos + 50)].lower()
                     
                     if "method: \"post\"" in context_after or "type: \"post\"" in context_after:
@@ -261,10 +255,7 @@ class BurpExtender(IBurpExtender, IHttpListener, ITab):
                         method = "DELETE"
                     elif "method: \"get\"" in context_after or "type: \"get\"" in context_after:
                         method = "GET"
-                    # 如果什么都没找到，则保持默认的 "GET"
-                
-                # --- END MODIFICATION ---
-                    
+
                 new_url = URL(source_url, path)
                 new_url_string = str(new_url).split("?")[0].split("#")[0]
                 
