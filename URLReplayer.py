@@ -20,6 +20,8 @@ import re
 from java.lang import Runnable, Thread
 from javax.swing import SwingUtilities
 
+import json
+
 
 class BurpExtender(IBurpExtender, IHttpListener, ITab):
 
@@ -60,7 +62,7 @@ class BurpExtender(IBurpExtender, IHttpListener, ITab):
         
         self.results_split_pane = JSplitPane(JSplitPane.VERTICAL_SPLIT)
         
-        self.results_model = DefaultTableModel(None, ["ID", "URL", "Status", "Length/Error"])
+        self.results_model = DefaultTableModel(None, ["ID", "Method", "URL", "Status", "Length/Error"])
         self.results_table = JTable(self.results_model)
         results_table_scroll = JScrollPane(self.results_table)
         
@@ -120,7 +122,7 @@ class BurpExtender(IBurpExtender, IHttpListener, ITab):
         callbacks.registerHttpListener(self)
         callbacks.addSuiteTab(self)
         
-        print("URL Replayer Plugin LOADED (V1.0 - Final Version)")
+        print("URL Replayer Plugin LOADED (V9.1 - Final Version)")
 
     def processHttpMessage(self, toolFlag, messageIsRequest, messageInfo):
         
@@ -156,33 +158,124 @@ class BurpExtender(IBurpExtender, IHttpListener, ITab):
             source_url = messageInfo.getUrl()
             source_request_bytes = messageInfo.getRequest()
             
+            json_parsed = False
             try:
-                potential_paths = set(self.PATH_REGEX.findall(body_string))
+                data = json.loads(body_string)
+                if isinstance(data, dict) and "paths" in data and ("swagger" in data or "openapi" in data):
+                    self.parseSwaggerDoc(data, source_url, source_request_bytes)
+                    json_parsed = True
             except Exception as e:
-                return
-                
-            for path in potential_paths:
-                path = path.strip().lower()
-                if "/" not in path:
+                pass
+            
+            if not json_parsed:
+                self.parseWithRegex(body_string, source_url, source_request_bytes)
+
+
+    def parseSwaggerDoc(self, data, source_url, source_request_bytes):
+        try:
+            paths = data.get('paths', {})
+            for path, methods in paths.items():
+                if not isinstance(methods, dict):
                     continue
+                
+                for method, details in methods.items():
+                    method_upper = method.upper()
+                    if method_upper not in ["GET", "POST", "PUT", "DELETE"]:
+                        continue
+                        
+                    try:
+                        new_url = URL(source_url, path)
+                        new_url_string = str(new_url).split("?")[0].split("#")[0]
+                        
+                        if not self.url_map.containsKey(new_url_string):
+                            data_to_store = {"request": source_request_bytes, "method": method_upper}
+                            self.url_map.put(new_url_string, data_to_store)
+                            SwingUtilities.invokeLater(
+                                lambda new_url_to_add=new_url_string: self.list_model.addElement(new_url_to_add)
+                            )
+                    except Exception as e:
+                        pass
+        except Exception as e:
+            print("Error parsing Swagger JSON: " + str(e))
+
+
+    def parseWithRegex(self, body_string, source_url, source_request_bytes):
+        try:
+            potential_paths = self.PATH_REGEX.finditer(body_string)
+        except Exception as e:
+            return
+            
+        for match in potential_paths:
+            try:
+                path = match.group(1).strip()
+                
+                if not path or "/" not in path:
+                    continue
+                
+                path_lower = path.lower()
                 is_static = False
                 for ext in self.IGNORED_EXTENSIONS:
-                    if path.endswith(ext):
+                    if path_lower.endswith(ext):
                         is_static = True
                         break
                 if is_static:
                     continue
-                try:
-                    new_url = URL(source_url, path)
-                    new_url_string = str(new_url).split("?")[0].split("#")[0]
+                
+                # --- START MODIFICATION (V9.2) ---
+                
+                method = "GET"  # 默认方法
+                start_pos = match.start()
+                end_pos = match.end()
+                
+                # 1. 优先检查URL之前的100个字符 (例如 .get(... , "get": ...)
+                context_before = body_string[max(0, start_pos - 100) : start_pos].lower()
+                
+                # 查找每种方法关键字的 *最后一次* 出现位置
+                pos_post = max(context_before.rfind(".post("), context_before.rfind("\"post\":"))
+                pos_get = max(context_before.rfind(".get("), context_before.rfind("\"get\":"))
+                pos_put = max(context_before.rfind(".put("), context_before.rfind("\"put\":"))
+                pos_delete = max(context_before.rfind(".delete("), context_before.rfind("\"delete\":"))
+
+                positions = {
+                    "POST": pos_post,
+                    "GET": pos_get,
+                    "PUT": pos_put,
+                    "DELETE": pos_delete
+                }
+                
+                # 过滤掉未找到的 (-1)，并找到位置索引最大的 (最接近URL的)
+                found_methods = {m: p for m, p in positions.items() if p != -1}
+                
+                if found_methods:
+                    # 将方法设置为最接近URL的那个
+                    method = max(found_methods, key=found_methods.get)
+                else:
+                    # 2. 如果之前没找到，再检查URL之后的50个字符 (例如 method: "post")
+                    context_after = body_string[end_pos : min(len(body_string), end_pos + 50)].lower()
                     
-                    if not self.url_map.containsKey(new_url_string):
-                        self.url_map.put(new_url_string, source_request_bytes)
-                        SwingUtilities.invokeLater(
-                            lambda new_url_to_add=new_url_string: self.list_model.addElement(new_url_to_add)
-                        )
-                except Exception as e:
-                    pass
+                    if "method: \"post\"" in context_after or "type: \"post\"" in context_after:
+                        method = "POST"
+                    elif "method: \"put\"" in context_after or "type: \"put\"" in context_after:
+                        method = "PUT"
+                    elif "method: \"delete\"" in context_after or "type: \"delete\"" in context_after:
+                        method = "DELETE"
+                    elif "method: \"get\"" in context_after or "type: \"get\"" in context_after:
+                        method = "GET"
+                    # 如果什么都没找到，则保持默认的 "GET"
+                
+                # --- END MODIFICATION ---
+                    
+                new_url = URL(source_url, path)
+                new_url_string = str(new_url).split("?")[0].split("#")[0]
+                
+                if not self.url_map.containsKey(new_url_string):
+                    data = {"request": source_request_bytes, "method": method}
+                    self.url_map.put(new_url_string, data)
+                    SwingUtilities.invokeLater(
+                        lambda new_url_to_add=new_url_string: self.list_model.addElement(new_url_to_add)
+                    )
+            except Exception as e:
+                pass # 忽略单个路径的解析错误
 
     def getTabCaption(self):
         return "URL Replayer"
@@ -243,20 +336,26 @@ class BurpExtender(IBurpExtender, IHttpListener, ITab):
             self.results_model.setRowCount(0)
             self.http_results = []
             
-            selected_urls = self.url_list.getSelectedValues()
+            selected_urls_obj = self.url_list.getSelectedValues()
             
-            if not selected_urls:
-                self.results_model.addRow([0, "Error: Please select one or more URLs.", "", ""])
+            if not selected_urls_obj:
+                self.results_model.addRow([0, "N/A", "Error: Please select one or more URLs.", "", ""])
                 return
             
-            for url in selected_urls:
-                task = RequestTask(self, str(url))
-                Thread(task).start()
+            for url_obj in selected_urls_obj:
+                url_str = str(url_obj)
+                source_data = self.url_map.get(url_str)
+                if source_data:
+                    method = source_data.get("method")
+                    task = RequestTask(self, url_str, method)
+                    Thread(task).start()
+                else:
+                    print("Error: No source data found for URL: " + url_str)
         
         except Exception as e:
             print("CRITICAL ERROR in onSendRequestClick: %s" % str(e))
             try:
-                self.results_model.addRow([0, "CRITICAL ERROR", "See Extender Output", str(e)])
+                self.results_model.addRow([0, "N/A", "CRITICAL ERROR", "See Extender Output", str(e)])
             except:
                 pass
 
@@ -271,7 +370,7 @@ class BurpExtender(IBurpExtender, IHttpListener, ITab):
                 self.request_viewer.setMessage(None, True)
                 self.response_viewer.setMessage(None, False)
             except Exception as e:
-                print("Minor error clearing message viewers (can be ignored): " + str(e))
+                pass
                 
         except Exception as e:
             print("CRITICAL ERROR in onClearClick: %s" % str(e))
@@ -279,9 +378,10 @@ class BurpExtender(IBurpExtender, IHttpListener, ITab):
 
 class RequestTask(Runnable):
     
-    def __init__(self, extender, url):
+    def __init__(self, extender, url, method):
         self.extender = extender
         self.url = url
+        self.method = method
 
     def run(self):
         try:
@@ -294,26 +394,33 @@ class RequestTask(Runnable):
             use_https = (protocol == "https")
             path = parsed_url.getPath() or "/"
             
-            source_request_bytes = self.extender.url_map.get(self.url)
-            if not source_request_bytes:
+            source_data = self.extender.url_map.get(self.url)
+            if not source_data:
                 raise Exception("Source request not found in map for " + self.url)
                 
+            source_request_bytes = source_data.get("request")
             source_info = self.extender._helpers.analyzeRequest(source_request_bytes)
             source_headers = source_info.getHeaders()
             
             new_request_lines = []
             
-            new_request_lines.append("GET %s HTTP/1.1" % path)
+            request_line = "%s %s HTTP/1.1" % (self.method, path)
+            new_request_lines.append(request_line)
             
             for header in source_headers:
                 if header.lower().startswith("get ") or \
                    header.lower().startswith("post ") or \
                    header.lower().startswith("put ") or \
+                   header.lower().startswith("delete ") or \
                    header.lower().startswith("host:"):
                     continue
                 new_request_lines.append(header)
                 
             new_request_lines.append("Host: %s" % host)
+            
+            if self.method == "POST" or self.method == "PUT":
+                if not any("content-length:" in h.lower() for h in new_request_lines):
+                    new_request_lines.append("Content-Length: 0")
             
             if not any("connection:" in h.lower() for h in new_request_lines):
                  new_request_lines.append("Connection: close")
@@ -339,6 +446,7 @@ class RequestTask(Runnable):
                 
             result_data = {
                 "url": self.url,
+                "method": self.method,
                 "status": status_code,
                 "length": length,
                 "message": response_message 
@@ -349,6 +457,7 @@ class RequestTask(Runnable):
         except Exception as e:
             error_data = {
                 "url": self.url,
+                "method": self.method,
                 "status": -1,
                 "length": -1,
                 "message": None,
@@ -371,6 +480,7 @@ class UpdateTableTask(Runnable):
             if "error" in self.data:
                 self.extender.results_model.addRow([
                     new_id,
+                    self.data.get("method"),
                     self.data["url"],
                     "ERROR",
                     self.data["error"]
@@ -378,6 +488,7 @@ class UpdateTableTask(Runnable):
             else:
                 self.extender.results_model.addRow([
                     new_id,
+                    self.data.get("method"),
                     self.data["url"],
                     self.data["status"],
                     self.data["length"]
