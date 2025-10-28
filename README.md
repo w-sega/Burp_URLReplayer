@@ -5,7 +5,7 @@ URLReplayer是一个burp插件，用于监听匹配所有响应中的接口，�
 ### 使用方法
 下载URLReplayer.py，在burp中添加extensions  
 
-默认开启监听，选中要测试的url，点击send。右侧的请求列表右键可发送到repeater  
+默认开启监听，shift可选中多个要测试的url，点击send。未配置请求头即默认来源的请求头包含cookie，右侧的请求列表右键可发送到repeater  
 
 1028更新  
 
