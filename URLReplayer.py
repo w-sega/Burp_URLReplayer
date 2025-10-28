@@ -1,5 +1,3 @@
-# -*- coding: utf-8 -*-
-
 from burp import IBurpExtender
 from burp import IHttpListener
 from burp import ITab
@@ -9,7 +7,7 @@ from javax.swing import JScrollPane, JList, JButton, JPanel, JTextArea, JSplitPa
 from javax.swing import JTable, JTabbedPane, JLabel, JTextField
 from javax.swing import ListSelectionModel, JToggleButton
 from javax.swing.table import DefaultTableModel
-from javax.swing.event import ListSelectionListener
+from javax.swing.event import ListSelectionListener, DocumentListener
 from java.awt import BorderLayout, FlowLayout
 from java.net import URL
 from javax.swing import JPopupMenu, JMenuItem
@@ -21,6 +19,17 @@ from java.lang import Runnable, Thread
 from javax.swing import SwingUtilities
 
 import json
+
+
+class FilterDocumentListener(DocumentListener):
+    def __init__(self, callback):
+        self.callback = callback
+    def insertUpdate(self, e):
+        self.callback()
+    def removeUpdate(self, e):
+        self.callback()
+    def changedUpdate(self, e):
+        self.callback()
 
 
 class BurpExtender(IBurpExtender, IHttpListener, ITab):
@@ -58,7 +67,21 @@ class BurpExtender(IBurpExtender, IHttpListener, ITab):
         self.list_model = DefaultListModel()
         self.url_list = JList(self.list_model)
         self.url_list.setSelectionMode(ListSelectionModel.MULTIPLE_INTERVAL_SELECTION)
-        left_panel = JScrollPane(self.url_list) 
+        list_scroll_pane = JScrollPane(self.url_list) 
+
+        searchable_list_panel = JPanel(BorderLayout())
+
+        self.search_field = JTextField()
+        self.search_field.getDocument().addDocumentListener(FilterDocumentListener(self.filterUrlList))
+
+        search_panel = JPanel(BorderLayout())
+        search_panel.add(JLabel(" Search: "), BorderLayout.WEST)
+        search_panel.add(self.search_field, BorderLayout.CENTER)
+        
+        searchable_list_panel.add(search_panel, BorderLayout.NORTH)
+        searchable_list_panel.add(list_scroll_pane, BorderLayout.CENTER)
+        
+        left_panel = searchable_list_panel 
         
         self.results_split_pane = JSplitPane(JSplitPane.VERTICAL_SPLIT)
         
@@ -115,8 +138,6 @@ class BurpExtender(IBurpExtender, IHttpListener, ITab):
         exclusion_panel.add(self.exclude_hosts_field, BorderLayout.CENTER)
         config_panel.add(exclusion_panel, BorderLayout.SOUTH)
 
-        # --- [新代码开始] ---
-        # 创建自定义请求头面板
         headers_panel = JPanel(BorderLayout())
         headers_label = JLabel(" Custom Headers (one per line, e.g., 'Cookie: value')")
         headers_panel.add(headers_label, BorderLayout.NORTH)
@@ -125,9 +146,7 @@ class BurpExtender(IBurpExtender, IHttpListener, ITab):
         headers_scroll = JScrollPane(self.custom_headers_area)
         headers_panel.add(headers_scroll, BorderLayout.CENTER)
         
-        # 将新面板添加到配置面板的“中间”区域
         config_panel.add(headers_panel, BorderLayout.CENTER)
-        # --- [新代码结束] ---
 
         self._main_panel.add(config_panel, BorderLayout.SOUTH)
         
@@ -136,7 +155,7 @@ class BurpExtender(IBurpExtender, IHttpListener, ITab):
         callbacks.registerHttpListener(self)
         callbacks.addSuiteTab(self)
         
-        print("URL Replayer Plugin LOADED (V1.2 - With Custom Headers)")
+        print("URL Replayer Plugin LOADED (V1.3 - Search + Headers)")
 
     def processHttpMessage(self, toolFlag, messageIsRequest, messageInfo):
         
@@ -205,7 +224,7 @@ class BurpExtender(IBurpExtender, IHttpListener, ITab):
                             data_to_store = {"request": source_request_bytes, "method": method_upper}
                             self.url_map.put(new_url_string, data_to_store)
                             SwingUtilities.invokeLater(
-                                lambda new_url_to_add=new_url_string: self.list_model.addElement(new_url_to_add)
+                                lambda new_url_to_add=new_url_string: self.addUrlToListModel(new_url_to_add)
                             )
                     except Exception as e:
                         pass
@@ -236,7 +255,7 @@ class BurpExtender(IBurpExtender, IHttpListener, ITab):
                     continue
                 
                 
-                method = "GET"  # 默认方法
+                method = "GET"
                 start_pos = match.start()
                 end_pos = match.end()
                 
@@ -277,10 +296,44 @@ class BurpExtender(IBurpExtender, IHttpListener, ITab):
                     data = {"request": source_request_bytes, "method": method}
                     self.url_map.put(new_url_string, data)
                     SwingUtilities.invokeLater(
-                        lambda new_url_to_add=new_url_string: self.list_model.addElement(new_url_to_add)
+                        lambda new_url_to_add=new_url_string: self.addUrlToListModel(new_url_to_add)
                     )
             except Exception as e:
-                pass # 忽略单个路径的解析错误
+                pass
+
+    def addUrlToListModel(self, url_to_add):
+        try:
+            search_text = self.search_field.getText().lower()
+            if search_text in url_to_add.lower():
+                self.list_model.addElement(url_to_add)
+        except Exception as e:
+            print("Error in addUrlToListModel: " + str(e))
+
+    def filterUrlList(self):
+        try:
+            search_text = self.search_field.getText().lower()
+            
+            selected_items = set(self.url_list.getSelectedValues())
+            
+            self.list_model.clear()
+            
+            all_urls = sorted(list(self.url_map.keySet()))
+            
+            new_selection_indices = []
+            current_index = 0
+            
+            for url in all_urls:
+                url_str = str(url)
+                if search_text in url_str.lower():
+                    self.list_model.addElement(url_str)
+                    if url_str in selected_items:
+                        new_selection_indices.append(current_index)
+                    current_index += 1
+            
+            self.url_list.setSelectedIndices(new_selection_indices)
+            
+        except Exception as e:
+            print("Error in filterUrlList: " + str(e))
 
     def getTabCaption(self):
         return "URL Replayer"
@@ -329,7 +382,7 @@ class BurpExtender(IBurpExtender, IHttpListener, ITab):
                     self._callbacks.sendToRepeater(
                         http_message.getHttpService().getHost(),
                         http_message.getHttpService().getPort(),
-                        (http_message.getHttpService().getProtocol() == "httpshttps"),
+                        (http_message.getHttpService().getProtocol() == "https"),
                         http_message.getRequest(),
                         "Replayer " + str(result_id)
                     )
@@ -347,18 +400,14 @@ class BurpExtender(IBurpExtender, IHttpListener, ITab):
                 self.results_model.addRow([0, "N/A", "Error: Please select one or more URLs.", "", ""])
                 return
             
-            # --- [修改开始] ---
             custom_headers_text = self.custom_headers_area.getText()
-            # --- [修改结束] ---
             
             for url_obj in selected_urls_obj:
                 url_str = str(url_obj)
                 source_data = self.url_map.get(url_str)
                 if source_data:
                     method = source_data.get("method")
-                    # --- [修改开始] ---
                     task = RequestTask(self, url_str, method, custom_headers_text)
-                    # --- [修改结束] ---
                     Thread(task).start()
                 else:
                     print("Error: No source data found for URL: " + url_str)
@@ -372,14 +421,13 @@ class BurpExtender(IBurpExtender, IHttpListener, ITab):
 
     def onClearClick(self, event):
         try:
+            self.search_field.setText("")
             self.url_map.clear()
             self.list_model.clear()
             self.results_model.setRowCount(0)
             self.http_results = []
             
-            # --- [新代码开始] ---
             self.custom_headers_area.setText("")
-            # --- [新代码结束] ---
             
             try:
                 self.request_viewer.setMessage(None, True)
@@ -416,11 +464,9 @@ class RequestTask(Runnable):
                 
             source_request_bytes = source_data.get("request")
             
-            # --- [修改后的代码块开始] ---
             source_info = self.extender._helpers.analyzeRequest(source_request_bytes)
             source_headers = source_info.getHeaders()
             
-            # 1. 解析自定义请求头
             parsed_custom_headers = []
             custom_header_names = set()
             if self.custom_headers_text:
@@ -431,14 +477,11 @@ class RequestTask(Runnable):
                         custom_header_names.add(header_name.lower())
                         parsed_custom_headers.append(line)
 
-            # 2. 构建新的请求头列表
             new_request_lines = []
             request_line = "%s %s HTTP/1.1" % (self.method, path)
             new_request_lines.append(request_line)
             
-            # 3. 添加原始请求头 (跳过被自定义头覆盖的)
             for header in source_headers:
-                # 跳过请求行和 Host 头
                 if header.lower().startswith("get ") or \
                    header.lower().startswith("post ") or \
                    header.lower().startswith("put ") or \
@@ -446,32 +489,27 @@ class RequestTask(Runnable):
                    header.lower().startswith("host:"):
                     continue
                 
-                # 检查是否需要被自定义头覆盖
                 try:
                     header_name = header.split(":", 1)[0].strip().lower()
                     if header_name in custom_header_names:
-                        continue # 跳过，使用自定义的
+                        continue 
                 except Exception as e:
-                    pass # 忽略畸形头
+                    pass 
                     
                 new_request_lines.append(header)
                 
             new_request_lines.append("Host: %s" % host)
             
-            # 4. 添加所有自定义请求头
             for custom_header in parsed_custom_headers:
                 new_request_lines.append(custom_header)
-            # --- [修改后的代码块结束] ---
             
             if self.method == "POST" or self.method == "PUT":
-                # 检查是否有自定义的 Content-Length
                 has_custom_cl = False
                 for h in parsed_custom_headers:
                     if h.lower().startswith("content-length:"):
                         has_custom_cl = True
                         break
                 
-                # 如果没有自定义CL，并且原始请求也没有CL，则添加 CL: 0
                 if not has_custom_cl and not any("content-length:" in h.lower() for h in new_request_lines):
                     new_request_lines.append("Content-Length: 0")
             
