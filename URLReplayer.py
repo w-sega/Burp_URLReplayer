@@ -115,6 +115,20 @@ class BurpExtender(IBurpExtender, IHttpListener, ITab):
         exclusion_panel.add(self.exclude_hosts_field, BorderLayout.CENTER)
         config_panel.add(exclusion_panel, BorderLayout.SOUTH)
 
+        # --- [新代码开始] ---
+        # 创建自定义请求头面板
+        headers_panel = JPanel(BorderLayout())
+        headers_label = JLabel(" Custom Headers (one per line, e.g., 'Cookie: value')")
+        headers_panel.add(headers_label, BorderLayout.NORTH)
+        
+        self.custom_headers_area = JTextArea(5, 20)
+        headers_scroll = JScrollPane(self.custom_headers_area)
+        headers_panel.add(headers_scroll, BorderLayout.CENTER)
+        
+        # 将新面板添加到配置面板的“中间”区域
+        config_panel.add(headers_panel, BorderLayout.CENTER)
+        # --- [新代码结束] ---
+
         self._main_panel.add(config_panel, BorderLayout.SOUTH)
         
         self.results_table.getSelectionModel().addListSelectionListener(self.onResultSelected)
@@ -122,7 +136,7 @@ class BurpExtender(IBurpExtender, IHttpListener, ITab):
         callbacks.registerHttpListener(self)
         callbacks.addSuiteTab(self)
         
-        print("URL Replayer Plugin LOADED (V1.1 - Final Version)")
+        print("URL Replayer Plugin LOADED (V1.2 - With Custom Headers)")
 
     def processHttpMessage(self, toolFlag, messageIsRequest, messageInfo):
         
@@ -315,7 +329,7 @@ class BurpExtender(IBurpExtender, IHttpListener, ITab):
                     self._callbacks.sendToRepeater(
                         http_message.getHttpService().getHost(),
                         http_message.getHttpService().getPort(),
-                        (http_message.getHttpService().getProtocol() == "https"),
+                        (http_message.getHttpService().getProtocol() == "httpshttps"),
                         http_message.getRequest(),
                         "Replayer " + str(result_id)
                     )
@@ -333,12 +347,18 @@ class BurpExtender(IBurpExtender, IHttpListener, ITab):
                 self.results_model.addRow([0, "N/A", "Error: Please select one or more URLs.", "", ""])
                 return
             
+            # --- [修改开始] ---
+            custom_headers_text = self.custom_headers_area.getText()
+            # --- [修改结束] ---
+            
             for url_obj in selected_urls_obj:
                 url_str = str(url_obj)
                 source_data = self.url_map.get(url_str)
                 if source_data:
                     method = source_data.get("method")
-                    task = RequestTask(self, url_str, method)
+                    # --- [修改开始] ---
+                    task = RequestTask(self, url_str, method, custom_headers_text)
+                    # --- [修改结束] ---
                     Thread(task).start()
                 else:
                     print("Error: No source data found for URL: " + url_str)
@@ -357,6 +377,10 @@ class BurpExtender(IBurpExtender, IHttpListener, ITab):
             self.results_model.setRowCount(0)
             self.http_results = []
             
+            # --- [新代码开始] ---
+            self.custom_headers_area.setText("")
+            # --- [新代码结束] ---
+            
             try:
                 self.request_viewer.setMessage(None, True)
                 self.response_viewer.setMessage(None, False)
@@ -369,10 +393,11 @@ class BurpExtender(IBurpExtender, IHttpListener, ITab):
 
 class RequestTask(Runnable):
     
-    def __init__(self, extender, url, method):
+    def __init__(self, extender, url, method, custom_headers_text):
         self.extender = extender
         self.url = url
         self.method = method
+        self.custom_headers_text = custom_headers_text
 
     def run(self):
         try:
@@ -390,27 +415,64 @@ class RequestTask(Runnable):
                 raise Exception("Source request not found in map for " + self.url)
                 
             source_request_bytes = source_data.get("request")
+            
+            # --- [修改后的代码块开始] ---
             source_info = self.extender._helpers.analyzeRequest(source_request_bytes)
             source_headers = source_info.getHeaders()
             
+            # 1. 解析自定义请求头
+            parsed_custom_headers = []
+            custom_header_names = set()
+            if self.custom_headers_text:
+                for line in self.custom_headers_text.splitlines():
+                    line = line.strip()
+                    if line and ":" in line:
+                        header_name = line.split(":", 1)[0].strip()
+                        custom_header_names.add(header_name.lower())
+                        parsed_custom_headers.append(line)
+
+            # 2. 构建新的请求头列表
             new_request_lines = []
-            
             request_line = "%s %s HTTP/1.1" % (self.method, path)
             new_request_lines.append(request_line)
             
+            # 3. 添加原始请求头 (跳过被自定义头覆盖的)
             for header in source_headers:
+                # 跳过请求行和 Host 头
                 if header.lower().startswith("get ") or \
                    header.lower().startswith("post ") or \
                    header.lower().startswith("put ") or \
                    header.lower().startswith("delete ") or \
                    header.lower().startswith("host:"):
                     continue
+                
+                # 检查是否需要被自定义头覆盖
+                try:
+                    header_name = header.split(":", 1)[0].strip().lower()
+                    if header_name in custom_header_names:
+                        continue # 跳过，使用自定义的
+                except Exception as e:
+                    pass # 忽略畸形头
+                    
                 new_request_lines.append(header)
                 
             new_request_lines.append("Host: %s" % host)
             
+            # 4. 添加所有自定义请求头
+            for custom_header in parsed_custom_headers:
+                new_request_lines.append(custom_header)
+            # --- [修改后的代码块结束] ---
+            
             if self.method == "POST" or self.method == "PUT":
-                if not any("content-length:" in h.lower() for h in new_request_lines):
+                # 检查是否有自定义的 Content-Length
+                has_custom_cl = False
+                for h in parsed_custom_headers:
+                    if h.lower().startswith("content-length:"):
+                        has_custom_cl = True
+                        break
+                
+                # 如果没有自定义CL，并且原始请求也没有CL，则添加 CL: 0
+                if not has_custom_cl and not any("content-length:" in h.lower() for h in new_request_lines):
                     new_request_lines.append("Content-Length: 0")
             
             if not any("connection:" in h.lower() for h in new_request_lines):

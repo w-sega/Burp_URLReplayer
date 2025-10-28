@@ -10,3 +10,8 @@ URLReplayer是一个burp插件，用于监听匹配所有响应中的接口，�
 下方配置白名单地址  
 
 <img src="20251027093953.png" alt="" width="80%">
+
+自定义请求头  
+
+
+<img src="20251028094010.png" alt="" width="80%">
