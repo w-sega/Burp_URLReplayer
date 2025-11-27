@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 from burp import IBurpExtender
 from burp import IHttpListener
 from burp import ITab
@@ -11,6 +12,8 @@ from javax.swing.event import ListSelectionListener, DocumentListener
 from java.awt import BorderLayout, FlowLayout
 from java.net import URL
 from javax.swing import JPopupMenu, JMenuItem
+from java.awt.event import MouseAdapter
+from java.awt.event import MouseEvent
 
 from java.util.concurrent import ConcurrentHashMap
 from java.lang import String
@@ -42,6 +45,8 @@ class BurpExtender(IBurpExtender, IHttpListener, ITab):
         self.url_map = ConcurrentHashMap()
         self.http_results = []
         self.is_listening = True
+        self.sort_order_ascending = True
+        self.sorted_column_name = "ID" 
 
         self.IGNORED_EXTENSIONS = [
             ".js", ".css", ".png", ".jpg", ".jpeg", ".gif", ".svg", ".ico",
@@ -88,6 +93,9 @@ class BurpExtender(IBurpExtender, IHttpListener, ITab):
         self.results_model = DefaultTableModel(None, ["ID", "Method", "URL", "Status", "Length/Error"])
         self.results_table = JTable(self.results_model)
         results_table_scroll = JScrollPane(self.results_table)
+        
+        header = self.results_table.getTableHeader()
+        header.addMouseListener(TableSorter(self, self.results_table))
         
         popup_menu = JPopupMenu()
         menu_item = JMenuItem("Send to Repeater", actionPerformed=self.onSendToRepeater)
@@ -154,6 +162,8 @@ class BurpExtender(IBurpExtender, IHttpListener, ITab):
 
         callbacks.registerHttpListener(self)
         callbacks.addSuiteTab(self)
+        
+        self.updateTableHeaderText() 
         
         print("URL Replayer Plugin LOADED (V1.3 - Search + Headers)")
 
@@ -335,6 +345,78 @@ class BurpExtender(IBurpExtender, IHttpListener, ITab):
         except Exception as e:
             print("Error in filterUrlList: " + str(e))
 
+    def updateTableHeaderText(self):
+        # Visually updates the column header text with an arrow for the sorted column
+        
+        default_headers = ["ID", "Method", "URL", "Status", "Length/Error"]
+        
+        # Determine the arrow based on sorting direction
+        arrow = u'\u25b2' if self.sort_order_ascending else u'\u25bc'
+        
+        current_identifiers = list(default_headers)
+        
+        if self.sorted_column_name in default_headers:
+            col_index = default_headers.index(self.sorted_column_name)
+            
+            # Update the specific column header
+            new_header_name = u"{} {}".format(self.sorted_column_name, arrow)
+            current_identifiers[col_index] = new_header_name
+        
+        # Reapply all identifiers to update the header text
+        self.results_model.setColumnIdentifiers(current_identifiers)
+
+
+    def sortResults(self, column_index):
+        # Only sort by 'Length/Error' (index 4)
+        if column_index != 4:
+            # If a different column is clicked, reset to default ID sort, but keep the header clean
+            self.sorted_column_name = self.results_model.getColumnName(0) # 'ID'
+            self.sort_order_ascending = True
+            self.updateTableHeaderText()
+            return
+
+        column_name = self.results_model.getColumnName(column_index)
+
+        # Toggle sort direction if the same column is clicked
+        if self.sorted_column_name == "Length/Error":
+            self.sort_order_ascending = not self.sort_order_ascending
+        else:
+            self.sort_order_ascending = False  # Default to descending (largest length first)
+        
+        self.sorted_column_name = "Length/Error"
+        reverse_sort = not self.sort_order_ascending
+
+        try:
+            # Step 1: Extract all rows and their sort keys
+            all_rows_data = []
+            row_count = self.results_model.getRowCount()
+            
+            for i in range(row_count):
+                length_error_val = self.results_model.getValueAt(i, 4)
+                try:
+                    sort_key = int(length_error_val)
+                except ValueError:
+                    sort_key = -1 
+                
+                row_data = [self.results_model.getValueAt(i, c) for c in range(self.results_model.getColumnCount())]
+                all_rows_data.append((sort_key, row_data))
+                
+            # Step 2: Sort the data
+            sorted_rows = sorted(all_rows_data, key=lambda x: x[0], reverse=reverse_sort)
+            
+            # Step 3: Clear the table and re-add sorted rows
+            self.results_model.setRowCount(0)
+            for sort_key, row_data in sorted_rows:
+                self.results_model.addRow(row_data)
+
+            self.results_table.clearSelection()
+            
+            # Step 4: Update the table header text to show the arrow/indicator
+            self.updateTableHeaderText()
+
+        except Exception as e:
+            print("Error in sortResults: " + str(e))
+
     def getTabCaption(self):
         return "URL Replayer"
 
@@ -429,6 +511,10 @@ class BurpExtender(IBurpExtender, IHttpListener, ITab):
             
             self.custom_headers_area.setText("")
             
+            self.sorted_column_name = "ID"
+            self.sort_order_ascending = True
+            self.updateTableHeaderText()
+            
             try:
                 self.request_viewer.setMessage(None, True)
                 self.response_viewer.setMessage(None, False)
@@ -437,6 +523,26 @@ class BurpExtender(IBurpExtender, IHttpListener, ITab):
                 
         except Exception as e:
             print("CRITICAL ERROR in onClearClick: %s" % str(e))
+
+
+class TableSorter(MouseAdapter):
+    def __init__(self, extender, table):
+        self.extender = extender
+        self.table = table
+        
+    def mouseClicked(self, e):
+        try:
+            header = self.table.getTableHeader()
+            if e.getSource() == header:
+                column_index = header.columnAtPoint(e.getPoint())
+                model_index = self.table.convertColumnIndexToModel(column_index)
+                
+                if e.getButton() == MouseEvent.BUTTON1:
+                    SwingUtilities.invokeLater(
+                        lambda index=model_index: self.extender.sortResults(index)
+                    )
+        except Exception as ex:
+            print("Error in TableSorter mouseClicked: " + str(ex))
 
 
 class RequestTask(Runnable):
