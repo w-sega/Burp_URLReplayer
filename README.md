@@ -7,6 +7,12 @@ URLReplayer是一个burp插件，用于监听匹配所有响应中的接口，�
 
 默认开启监听，shift可选中多个要测试的url，点击send。未配置请求头即默认来源的请求头包含cookie，右侧的请求列表右键可发送到repeater  
 
+20251226更新  
+  
+支持了右键自由选择来源的默认请求、get post请求、发送到repeater、删除
+
+<img src="20251226.png" alt="" width="80%">
+
 1127更新  
   
 支持了按响应长度排序
