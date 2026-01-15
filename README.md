@@ -1,6 +1,6 @@
 # URLReplayer
 
-URLReplayer现已合并到Burp_Parsing
+URLReplayer现已合并到Burp_Parsing。覆盖场景更全面，一键提取参数、发包，快速完成未授权验证。
 
 # Burp_Parsing
 
@@ -14,8 +14,8 @@ URLReplayer现已合并到Burp_Parsing
     * **智能填充**：自动识别 `page`, `id`, `size` 等常见参数并填充测试值。
     * **格式转换**：支持一键在 `GET` (Query String) 和 `POST` (JSON Body) 之间切换。
 * **联动**：支持将重组后的请求发送至 Burp Repeater 或插件自带的 Batch Replayer。  
-<img src="acaeeabc338b1439c79cb3f23663d5b3.png" alt="" width="80%">  
-<img src="f40a906a8b7e254c96cfaac431c6a19a.png" alt="" width="80%">
+<img src="/png/acaeeabc338b1439c79cb3f23663d5b3.png" alt="" width="80%">  
+<img src="/png/f40a906a8b7e254c96cfaac431c6a19a.png" alt="" width="80%">
 
 
 
@@ -26,7 +26,7 @@ URLReplayer现已合并到Burp_Parsing
     * **智能过滤**：自动忽略静态资源（.js, .css, .png）及指定域名（如 google.com）。
     * **自定义头**：支持添加 Custom Headers（如 Auth Token）覆盖默认设置。
 * **可视化结果**：提供结果表格排序，支持点击查看详细 Request/Response 报文。  
-<img src="4395fc233216b2ecdfe282c310df4826.png" alt="" width="80%">
+<img src="/png/4395fc233216b2ecdfe282c310df4826.png" alt="" width="80%">
 
 ## 🚀 快速使用
 
@@ -57,7 +57,7 @@ URLReplayer现已合并到Burp_Parsing
   
 支持了右键自由选择来源的默认请求、get post请求、发送到repeater、删除
 
-<img src="20251226.png" alt="" width="80%">
+<img src="/png/20251226.png" alt="" width="80%">
 
 1127更新  
   
@@ -70,10 +70,10 @@ URLReplayer现已合并到Burp_Parsing
 
 下方配置白名单地址  
 
-<img src="20251027093953.png" alt="" width="80%">
+<img src="/png/20251027093953.png" alt="" width="80%">
 
 自定义请求头  
 
-<img src="20251028094010.png" alt="" width="80%">
+<img src="/png/20251028094010.png" alt="" width="80%">
 
 
